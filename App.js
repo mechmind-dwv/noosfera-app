@@ -27,6 +27,8 @@ import { colors, clamp, stateForIndex } from './theme';
 import Gauge from './components/Gauge';
 import Oscilloscope from './components/Oscilloscope';
 import ReadingCell from './components/ReadingCell';
+import EquationCard from './components/EquationCard';
+import MechanismCard from './components/MechanismCard';
 
 const SCOPE_LEN = 60;
 const MAG_BASELINE = 48; // μT, aproximación de campo terrestre típico
@@ -43,6 +45,10 @@ export default function App() {
 
   const [kp, setKp] = useState(null);
   const [kpIsLive, setKpIsLive] = useState(true);
+  const [f107, setF107] = useState(null);
+  const [f107IsLive, setF107IsLive] = useState(true);
+  const [donki, setDonki] = useState(null); // { type, label, time } del evento más reciente, o null
+  const [donkiIsLive, setDonkiIsLive] = useState(true);
   const [mag, setMag] = useState(MAG_BASELINE);
   const [sensorActive, setSensorActive] = useState(false);
   const [sensorAvailable, setSensorAvailable] = useState(true);
@@ -62,8 +68,20 @@ export default function App() {
       );
       if (!res.ok) throw new Error('network');
       const json = await res.json();
-      const last = json[json.length - 1];
-      const kpValue = parseFloat(last[1]);
+
+      // La primera fila es la cabecera (["time_tag","kp",...]); buscamos
+      // desde el final la última fila cuyo valor de Kp sea un número real.
+      let kpValue = null;
+      for (let i = json.length - 1; i >= 1; i--) {
+        const candidate = parseFloat(json[i][1]);
+        if (Number.isFinite(candidate)) {
+          kpValue = candidate;
+          break;
+        }
+      }
+
+      if (kpValue === null) throw new Error('no valid Kp row found');
+
       setKp(kpValue);
       setKpIsLive(true);
       setLastUpdate(new Date());
@@ -78,6 +96,84 @@ export default function App() {
     const interval = setInterval(fetchKp, 3 * 60 * 1000);
     return () => clearInterval(interval);
   }, [fetchKp]);
+
+  // ---------- NOAA F10.7 (flujo de radio solar, sfu) ----------
+  const fetchF107 = useCallback(async () => {
+    try {
+      const res = await fetch('https://services.swpc.noaa.gov/json/f107_cm_flux.json');
+      if (!res.ok) throw new Error('network');
+      const json = await res.json();
+      if (!Array.isArray(json) || json.length === 0) throw new Error('empty');
+
+      // El esquema exacto de campo puede variar; probamos los nombres más probables
+      // y validamos que el resultado sea un número real antes de aceptarlo.
+      let f107Value = null;
+      for (let i = json.length - 1; i >= 0; i--) {
+        const row = json[i];
+        const candidate = parseFloat(
+          row.flux ?? row.f107 ?? row.observed_flux ?? row.f107_flux ?? row.value
+        );
+        if (Number.isFinite(candidate)) {
+          f107Value = candidate;
+          break;
+        }
+      }
+
+      if (f107Value === null) throw new Error('no valid F10.7 row found');
+
+      setF107(f107Value);
+      setF107IsLive(true);
+    } catch (e) {
+      // Rango típico real: ~65 (mínimo solar) a ~300 (máximo solar), en sfu
+      setF107(70 + Math.random() * 40);
+      setF107IsLive(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchF107();
+    const interval = setInterval(fetchF107, 10 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [fetchF107]);
+
+  // ---------- NASA DONKI (eyecciones de masa coronal y llamaradas recientes) ----------
+  const fetchDonki = useCallback(async () => {
+    try {
+      const today = new Date();
+      const sevenDaysAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const fmt = (d) => d.toISOString().slice(0, 10);
+
+      const url =
+        `https://api.nasa.gov/DONKI/notifications?startDate=${fmt(sevenDaysAgo)}` +
+        `&endDate=${fmt(today)}&type=all&api_key=DEMO_KEY`;
+
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('network');
+      const json = await res.json();
+      if (!Array.isArray(json) || json.length === 0) {
+        setDonki(null); // sin eventos recientes es un resultado válido, no un error
+        setDonkiIsLive(true);
+        return;
+      }
+
+      const latest = json[json.length - 1];
+      setDonki({
+        type: latest.messageType || 'Evento',
+        label: (latest.messageBody || '').slice(0, 140),
+        time: latest.messageIssueTime || null,
+      });
+      setDonkiIsLive(true);
+    } catch (e) {
+      setDonki(null);
+      setDonkiIsLive(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchDonki();
+    const interval = setInterval(fetchDonki, 15 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [fetchDonki]);
 
   // ---------- Magnetometer ----------
   const startSimulatedMag = useCallback(() => {
@@ -95,6 +191,12 @@ export default function App() {
   }, [sensorActive, startSimulatedMag]);
 
   const activateSensor = async () => {
+    if (Platform.OS === 'web') {
+      // El módulo nativo de Magnetometer no existe en navegador.
+      // No lo intentamos: pasamos directo al modo simulado, sin errores en consola.
+      setSensorAvailable(false);
+      return;
+    }
     try {
       const { status } = await Magnetometer.requestPermissionsAsync();
       if (status !== 'granted') {
@@ -183,7 +285,7 @@ export default function App() {
           <View style={styles.readingsGrid}>
             <ReadingCell
               label="Índice Kp (NOAA)"
-              value={kp !== null ? kp.toFixed(1) : '—'}
+              value={Number.isFinite(kp) ? kp.toFixed(1) : '—'}
               unit={kpIsLive ? '/9' : '/9*'}
               note="Actividad geomagnética planetaria, datos del SWPC."
             />
@@ -192,6 +294,23 @@ export default function App() {
               value={mag.toFixed(1)}
               unit={sensorActive ? 'μT' : 'μT*'}
               note="Magnetómetro del dispositivo. Requiere permiso de sensores."
+            />
+            <ReadingCell
+              label="Flujo solar F10.7 (NOAA)"
+              value={Number.isFinite(f107) ? f107.toFixed(0) : '—'}
+              unit={f107IsLive ? 'sfu' : 'sfu*'}
+              note="Flujo de radio a 2800 MHz, proxy clásico de actividad solar."
+            />
+            <ReadingCell
+              label="Evento solar reciente (NASA DONKI)"
+              value={donki ? donki.type : 'Sin eventos'}
+              note={
+                donkiIsLive
+                  ? donki
+                    ? 'Últimos 7 días, vía NASA DONKI.'
+                    : 'Sin notificaciones DONKI en los últimos 7 días.'
+                  : 'NASA DONKI no disponible — reintentando.'
+              }
             />
             <ReadingCell
               label="Estado de equilibrio"
@@ -215,6 +334,8 @@ export default function App() {
                 ? 'Magnetómetro activo — lectura en tiempo real.'
                 : sensorAvailable
                 ? 'Magnetómetro no activado — mostrando estimación basal.'
+                : Platform.OS === 'web'
+                ? 'El navegador no expone el magnetómetro — descarga la app para lectura real del dispositivo.'
                 : 'Sensor no disponible o permiso denegado.'}
             </Text>
             {!sensorActive && sensorAvailable && (
@@ -254,18 +375,44 @@ export default function App() {
 
         {/* Equation */}
         <Section num="03 · FORMALISMO" title="La ecuación que " em="gobierna el índice">
-          <View style={styles.eqBox}>
-            <Text style={styles.eqMain}>σ = Σ Jᵢ Xᵢ ≥ 0</Text>
-            <Text style={styles.eqCaption}>
-              La producción de entropía es el producto de los flujos por las fuerzas que los
-              originan. El Índice de Carga Disipativa es una aproximación normalizada (0–100)
-              de este principio.
-            </Text>
-          </View>
+          <EquationCard index={indexValue} />
+        </Section>
+
+        {/* Mechanisms */}
+        <Section num="04 · MECANISMOS" title="Cómo el cosmos " em="toca la célula">
+          <Text style={styles.mechanismsIntro}>
+            Cuatro vías documentadas de acoplamiento entre el entorno físico y la
+            fisiología. Cada una con su propio grado de certeza científica — no
+            todas están igual de establecidas, y ese matiz importa.
+          </Text>
+          <MechanismCard
+            title="Luz → ritmo circadiano y hormonal"
+            evidence="established"
+            mechanism="Células ganglionares de la retina, sensibles a la luz, informan al núcleo supraquiasmático (SCN) del hipotálamo. El SCN sincroniza relojes periféricos en todo el cuerpo y regula la secreción nocturna de melatonina y el ritmo de cortisol."
+            source="Zisapel, 2018 · Br J Pharmacol — mecanismo bien establecido"
+          />
+          <MechanismCard
+            title="Aero-ionización → sangre y sistema nervioso"
+            evidence="hypothesis"
+            mechanism="Chizhevsky propuso una cadena causal: erupciones solares inducen tormentas geomagnéticas, que alteran la ionización atmosférica; los aero-iones inhalados influirían en la agregación de eritrocitos y la transmisión de impulsos nerviosos."
+            source="Chizhevsky, fundador de la aero-ionización — hipótesis histórica, en debate"
+          />
+          <MechanismCard
+            title="Resonancia Schumann → ondas cerebrales"
+            evidence="partial"
+            mechanism="La cavidad Tierra-ionosfera resuena a ~7.83 Hz, en el rango de las ondas alfa cerebrales. Estudios de EEG han hallado coherencia espectral entre la resonancia Schumann y la actividad cortical en algunos sujetos, de forma no continua."
+            source="Pobachenko et al., 2006; Saroka & Persinger — evidencia correlacional, no concluyente"
+          />
+          <MechanismCard
+            title="Geomagnetismo → viscosidad sanguínea"
+            evidence="hypothesis"
+            mechanism="La hipótesis de Chizhevsky extiende el mecanismo de aero-ionización: cambios en el campo geomagnético modularían la carga eléctrica superficial (potencial zeta) de los eritrocitos, afectando su tendencia a agregarse y la viscosidad de la sangre."
+            source="Tradición de la electrohematología de Chizhevsky — requiere más validación moderna"
+          />
         </Section>
 
         {/* Lineage */}
-        <Section num="04 · LINAJE" title="Sobre los hombros de " em="quienes vieron primero">
+        <Section num="05 · LINAJE" title="Sobre los hombros de " em="quienes vieron primero">
           <LineageCell name="A. L. Chizhevsky" years="1897 – 1964" desc="Fundador de la Heliobiología." />
           <LineageCell name="Franz Halberg" years="1919 – 2013" desc="Fundador de la Cronobiología." />
           <LineageCell name="Vladimir Vernadsky" years="1863 – 1945" desc="Concibió la Noósfera." />
@@ -436,6 +583,13 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     color: colors.gold,
   },
+  mechanismsIntro: {
+    fontFamily: 'Spectral_300Light',
+    fontSize: 13.5,
+    lineHeight: 20,
+    color: colors.paperDim,
+    marginBottom: 4,
+  },
 
   layer: {
     borderTopWidth: 1,
@@ -467,29 +621,6 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: colors.goldDim,
     marginTop: 8,
-  },
-
-  eqBox: {
-    borderWidth: 1,
-    borderColor: colors.lineBright,
-    backgroundColor: colors.void2,
-    padding: 24,
-    alignItems: 'center',
-  },
-  eqMain: {
-    fontFamily: 'JetBrainsMono_500Medium',
-    fontSize: 20,
-    color: colors.gold,
-    letterSpacing: 0.5,
-  },
-  eqCaption: {
-    fontFamily: 'Spectral_400Regular_Italic',
-    fontStyle: 'italic',
-    fontSize: 12,
-    color: colors.paperDim,
-    marginTop: 14,
-    textAlign: 'center',
-    lineHeight: 18,
   },
 
   lineageCell: {
