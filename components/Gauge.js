@@ -7,7 +7,8 @@ import { colors, stateForIndex } from '../theme';
 const AnimatedLine = Animated.createAnimatedComponent(Line);
 const ARC_LEN = 251.2; // longitud aproximada del semicírculo r=80
 
-export default function Gauge({ index }) {
+export default function Gauge({ index: rawIndex }) {
+  const index = Number.isFinite(rawIndex) ? Math.max(0, Math.min(100, rawIndex)) : 0;
   const animValue = useRef(new Animated.Value(index)).current;
 
   useEffect(() => {
