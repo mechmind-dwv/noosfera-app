@@ -1,0 +1,35 @@
+{
+  "expo": {
+    "name": "Noósfera",
+    "slug": "noosfera-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0a0e14",
+    "splash": {
+      "backgroundColor": "#0a0e14"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "org.chizhevskyfoundation.noosfera",
+      "infoPlist": {
+        "NSMotionUsageDescription": "Noósfera usa el magnetómetro para medir el campo geomagnético local y calcular tu índice de carga disipativa."
+      }
+    },
+    "android": {
+      "package": "org.chizhevskyfoundation.noosfera",
+      "adaptiveIcon": {
+        "backgroundColor": "#0a0e14"
+      },
+      "permissions": [
+        "android.permission.INTERNET"
+      ]
+    },
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}
