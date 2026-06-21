@@ -29,6 +29,9 @@ import Oscilloscope from './components/Oscilloscope';
 import ReadingCell from './components/ReadingCell';
 import EquationCard from './components/EquationCard';
 import MechanismCard from './components/MechanismCard';
+import KpHistoryChart from './components/KpHistoryChart';
+import SolarCycleExplainer from './components/SolarCycleExplainer';
+import Logbook from './components/Logbook';
 
 const SCOPE_LEN = 60;
 const MAG_BASELINE = 48; // μT, aproximación de campo terrestre típico
@@ -44,6 +47,7 @@ export default function App() {
   });
 
   const [kp, setKp] = useState(null);
+  const [kpHistory, setKpHistory] = useState([]);
   const [kpIsLive, setKpIsLive] = useState(true);
   const [f107, setF107] = useState(null);
   const [f107IsLive, setF107IsLive] = useState(true);
@@ -69,20 +73,21 @@ export default function App() {
       if (!res.ok) throw new Error('network');
       const json = await res.json();
 
-      // La primera fila es la cabecera (["time_tag","kp",...]); buscamos
-      // desde el final la última fila cuyo valor de Kp sea un número real.
-      let kpValue = null;
-      for (let i = json.length - 1; i >= 1; i--) {
+      // La primera fila es la cabecera (["time_tag","kp",...]); el resto son
+      // lecturas de 3h durante ~7 días. Extraemos todo el histórico válido,
+      // no solo el último punto, para poder graficar la tendencia.
+      const historyValues = [];
+      for (let i = 1; i < json.length; i++) {
         const candidate = parseFloat(json[i][1]);
-        if (Number.isFinite(candidate)) {
-          kpValue = candidate;
-          break;
-        }
+        if (Number.isFinite(candidate)) historyValues.push(candidate);
       }
 
-      if (kpValue === null) throw new Error('no valid Kp row found');
+      if (historyValues.length === 0) throw new Error('no valid Kp row found');
+
+      const kpValue = historyValues[historyValues.length - 1];
 
       setKp(kpValue);
+      setKpHistory(historyValues);
       setKpIsLive(true);
       setLastUpdate(new Date());
     } catch (e) {
@@ -351,8 +356,18 @@ export default function App() {
           <Oscilloscope data={scopeData} />
         </Section>
 
+        {/* Kp History */}
+        <Section num="02 · TENDENCIA" title="Los últimos " em="7 días de campo">
+          <KpHistoryChart history={kpHistory} />
+        </Section>
+
+        {/* Solar Cycle */}
+        <Section num="03 · ESCALA LARGA" title="Dónde estamos en el " em="ciclo de 11 años">
+          <SolarCycleExplainer />
+        </Section>
+
         {/* Layers */}
-        <Section num="02 · MODELO" title="Tres capas de " em="acoplamiento">
+        <Section num="04 · MODELO" title="Tres capas de " em="acoplamiento">
           <Layer
             tag="Sol"
             title="El gradiente de origen"
@@ -374,12 +389,12 @@ export default function App() {
         </Section>
 
         {/* Equation */}
-        <Section num="03 · FORMALISMO" title="La ecuación que " em="gobierna el índice">
+        <Section num="05 · FORMALISMO" title="La ecuación que " em="gobierna el índice">
           <EquationCard index={indexValue} />
         </Section>
 
         {/* Mechanisms */}
-        <Section num="04 · MECANISMOS" title="Cómo el cosmos " em="toca la célula">
+        <Section num="06 · MECANISMOS" title="Cómo el cosmos " em="toca la célula">
           <Text style={styles.mechanismsIntro}>
             Cuatro vías documentadas de acoplamiento entre el entorno físico y la
             fisiología. Cada una con su propio grado de certeza científica — no
@@ -411,8 +426,13 @@ export default function App() {
           />
         </Section>
 
+        {/* Logbook */}
+        <Section num="07 · BITÁCORA" title="Tu propio " em="registro">
+          <Logbook currentIndex={indexValue} currentKp={kp} />
+        </Section>
+
         {/* Lineage */}
-        <Section num="05 · LINAJE" title="Sobre los hombros de " em="quienes vieron primero">
+        <Section num="08 · LINAJE" title="Sobre los hombros de " em="quienes vieron primero">
           <LineageCell name="A. L. Chizhevsky" years="1897 – 1964" desc="Fundador de la Heliobiología." />
           <LineageCell name="Franz Halberg" years="1919 – 2013" desc="Fundador de la Cronobiología." />
           <LineageCell name="Vladimir Vernadsky" years="1863 – 1945" desc="Concibió la Noósfera." />
