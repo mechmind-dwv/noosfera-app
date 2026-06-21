@@ -36,6 +36,11 @@ import Logbook from './components/Logbook';
 const SCOPE_LEN = 60;
 const MAG_BASELINE = 48; // μT, aproximación de campo terrestre típico
 
+// Clave de la API de NASA DONKI. Se lee de la variable de entorno EXPO_PUBLIC_NASA_API_KEY
+// (definida en .env, nunca commiteada al repo). Si no está configurada, cae a DEMO_KEY
+// — funcional pero limitada a 30 peticiones/hora compartidas globalmente.
+const NASA_API_KEY = process.env.EXPO_PUBLIC_NASA_API_KEY || 'DEMO_KEY';
+
 export default function App() {
   const [fontsLoaded] = useFonts({
     Spectral_300Light,
@@ -150,7 +155,7 @@ export default function App() {
 
       const url =
         `https://api.nasa.gov/DONKI/notifications?startDate=${fmt(sevenDaysAgo)}` +
-        `&endDate=${fmt(today)}&type=all&api_key=DEMO_KEY`;
+        `&endDate=${fmt(today)}&type=all&api_key=${NASA_API_KEY}`;
 
       const res = await fetch(url);
       if (!res.ok) throw new Error('network');
