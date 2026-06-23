@@ -1,5 +1,5 @@
 // App.js
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React from 'react';
 import {
   SafeAreaView,
   ScrollView,
@@ -10,7 +10,6 @@ import {
   Platform,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { Magnetometer } from 'expo-sensors';
 import {
   useFonts,
   Spectral_300Light,
@@ -23,7 +22,16 @@ import {
   JetBrainsMono_500Medium,
 } from '@expo-google-fonts/jetbrains-mono';
 
-import { colors, clamp, stateForIndex } from './theme';
+import { colors, stateForIndex } from './theme';
+
+import { useKpData } from './hooks/useKpData';
+import { useF107Data } from './hooks/useF107Data';
+import { useDonkiData } from './hooks/useDonkiData';
+import { useMagnetometer } from './hooks/useMagnetometer';
+import { useDissipativeIndex } from './hooks/useDissipativeIndex';
+import { useLightSensor } from './hooks/useLightSensor';
+import { useUVIndex } from './hooks/useUVIndex';
+
 import Gauge from './components/Gauge';
 import Oscilloscope from './components/Oscilloscope';
 import ReadingCell from './components/ReadingCell';
@@ -32,14 +40,9 @@ import MechanismCard from './components/MechanismCard';
 import KpHistoryChart from './components/KpHistoryChart';
 import SolarCycleExplainer from './components/SolarCycleExplainer';
 import Logbook from './components/Logbook';
-
-const SCOPE_LEN = 60;
-const MAG_BASELINE = 48; // μT, aproximación de campo terrestre típico
-
-// Clave de la API de NASA DONKI. Se lee de la variable de entorno EXPO_PUBLIC_NASA_API_KEY
-// (definida en .env, nunca commiteada al repo). Si no está configurada, cae a DEMO_KEY
-// — funcional pero limitada a 30 peticiones/hora compartidas globalmente.
-const NASA_API_KEY = process.env.EXPO_PUBLIC_NASA_API_KEY || 'DEMO_KEY';
+import { LightCell, UVCell } from './components/LightReading';
+import HeartRateMonitor from './components/HeartRateMonitor';
+import DataDiagnostic from './components/DataDiagnostic';
 
 export default function App() {
   const [fontsLoaded] = useFonts({
@@ -51,210 +54,13 @@ export default function App() {
     JetBrainsMono_500Medium,
   });
 
-  const [kp, setKp] = useState(null);
-  const [kpHistory, setKpHistory] = useState([]);
-  const [kpIsLive, setKpIsLive] = useState(true);
-  const [f107, setF107] = useState(null);
-  const [f107IsLive, setF107IsLive] = useState(true);
-  const [donki, setDonki] = useState(null); // { type, label, time } del evento más reciente, o null
-  const [donkiIsLive, setDonkiIsLive] = useState(true);
-  const [mag, setMag] = useState(MAG_BASELINE);
-  const [sensorActive, setSensorActive] = useState(false);
-  const [sensorAvailable, setSensorAvailable] = useState(true);
-  const [scopeData, setScopeData] = useState(
-    Array.from({ length: SCOPE_LEN }, () => 0.3 + Math.random() * 0.05)
-  );
-  const [lastUpdate, setLastUpdate] = useState(null);
-
-  const magSubscription = useRef(null);
-  const magRef = useRef(MAG_BASELINE);
-
-  // ---------- NOAA Kp fetch ----------
-  const fetchKp = useCallback(async () => {
-    try {
-      const res = await fetch(
-        'https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json'
-      );
-      if (!res.ok) throw new Error('network');
-      const json = await res.json();
-
-      // La primera fila es la cabecera (["time_tag","kp",...]); el resto son
-      // lecturas de 3h durante ~7 días. Extraemos todo el histórico válido,
-      // no solo el último punto, para poder graficar la tendencia.
-      const historyValues = [];
-      for (let i = 1; i < json.length; i++) {
-        const candidate = parseFloat(json[i][1]);
-        if (Number.isFinite(candidate)) historyValues.push(candidate);
-      }
-
-      if (historyValues.length === 0) throw new Error('no valid Kp row found');
-
-      const kpValue = historyValues[historyValues.length - 1];
-
-      setKp(kpValue);
-      setKpHistory(historyValues);
-      setKpIsLive(true);
-      setLastUpdate(new Date());
-    } catch (e) {
-      setKp(2 + Math.random() * 1.5);
-      setKpIsLive(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchKp();
-    const interval = setInterval(fetchKp, 3 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, [fetchKp]);
-
-  // ---------- NOAA F10.7 (flujo de radio solar, sfu) ----------
-  const fetchF107 = useCallback(async () => {
-    try {
-      const res = await fetch('https://services.swpc.noaa.gov/json/f107_cm_flux.json');
-      if (!res.ok) throw new Error('network');
-      const json = await res.json();
-      if (!Array.isArray(json) || json.length === 0) throw new Error('empty');
-
-      // El esquema exacto de campo puede variar; probamos los nombres más probables
-      // y validamos que el resultado sea un número real antes de aceptarlo.
-      let f107Value = null;
-      for (let i = json.length - 1; i >= 0; i--) {
-        const row = json[i];
-        const candidate = parseFloat(
-          row.flux ?? row.f107 ?? row.observed_flux ?? row.f107_flux ?? row.value
-        );
-        if (Number.isFinite(candidate)) {
-          f107Value = candidate;
-          break;
-        }
-      }
-
-      if (f107Value === null) throw new Error('no valid F10.7 row found');
-
-      setF107(f107Value);
-      setF107IsLive(true);
-    } catch (e) {
-      // Rango típico real: ~65 (mínimo solar) a ~300 (máximo solar), en sfu
-      setF107(70 + Math.random() * 40);
-      setF107IsLive(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchF107();
-    const interval = setInterval(fetchF107, 10 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, [fetchF107]);
-
-  // ---------- NASA DONKI (eyecciones de masa coronal y llamaradas recientes) ----------
-  const fetchDonki = useCallback(async () => {
-    try {
-      const today = new Date();
-      const sevenDaysAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
-      const fmt = (d) => d.toISOString().slice(0, 10);
-
-      const url =
-        `https://api.nasa.gov/DONKI/notifications?startDate=${fmt(sevenDaysAgo)}` +
-        `&endDate=${fmt(today)}&type=all&api_key=${NASA_API_KEY}`;
-
-      const res = await fetch(url);
-      if (!res.ok) throw new Error('network');
-      const json = await res.json();
-      if (!Array.isArray(json) || json.length === 0) {
-        setDonki(null); // sin eventos recientes es un resultado válido, no un error
-        setDonkiIsLive(true);
-        return;
-      }
-
-      const latest = json[json.length - 1];
-      setDonki({
-        type: latest.messageType || 'Evento',
-        label: (latest.messageBody || '').slice(0, 140),
-        time: latest.messageIssueTime || null,
-      });
-      setDonkiIsLive(true);
-    } catch (e) {
-      setDonki(null);
-      setDonkiIsLive(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchDonki();
-    const interval = setInterval(fetchDonki, 15 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, [fetchDonki]);
-
-  // ---------- Magnetometer ----------
-  const startSimulatedMag = useCallback(() => {
-    const interval = setInterval(() => {
-      const next = MAG_BASELINE + (Math.random() - 0.5) * 6;
-      magRef.current = next;
-      setMag(next);
-    }, 2000);
-    return interval;
-  }, []);
-
-  useEffect(() => {
-    const simInterval = sensorActive ? null : startSimulatedMag();
-    return () => simInterval && clearInterval(simInterval);
-  }, [sensorActive, startSimulatedMag]);
-
-  const activateSensor = async () => {
-    if (Platform.OS === 'web') {
-      // El módulo nativo de Magnetometer no existe en navegador.
-      // No lo intentamos: pasamos directo al modo simulado, sin errores en consola.
-      setSensorAvailable(false);
-      return;
-    }
-    try {
-      const { status } = await Magnetometer.requestPermissionsAsync();
-      if (status !== 'granted') {
-        setSensorAvailable(false);
-        return;
-      }
-      Magnetometer.setUpdateInterval(800);
-      magSubscription.current = Magnetometer.addListener((data) => {
-        const magnitude = Math.sqrt(data.x ** 2 + data.y ** 2 + data.z ** 2);
-        magRef.current = magnitude;
-        setMag(magnitude);
-      });
-      setSensorActive(true);
-    } catch (e) {
-      setSensorAvailable(false);
-    }
-  };
-
-  useEffect(() => {
-    return () => {
-      if (magSubscription.current) magSubscription.current.remove();
-    };
-  }, []);
-
-  // ---------- Index calculation + scope tick ----------
-  useEffect(() => {
-    const tick = setInterval(() => {
-      const magDeviation = clamp(Math.abs(magRef.current - MAG_BASELINE) / 25, 0, 1);
-      const kpNorm = kp !== null ? clamp(kp / 9, 0, 1) : 0.25;
-      const rfSim = 0.15 + Math.sin(Date.now() / 9000) * 0.08;
-      const idx = clamp((magDeviation * 0.5 + kpNorm * 0.3 + rfSim * 0.2) * 100, 0, 100);
-
-      setScopeData((prev) => {
-        const next = [...prev.slice(1), clamp(idx / 100 + (Math.random() - 0.5) * 0.04, 0, 1)];
-        return next;
-      });
-    }, 800);
-    return () => clearInterval(tick);
-  }, [kp]);
-
-  const indexValue = clamp(
-    (clamp(Math.abs(mag - MAG_BASELINE) / 25, 0, 1) * 0.5 +
-      (kp !== null ? clamp(kp / 9, 0, 1) : 0.25) * 0.3 +
-      (0.15 + Math.sin(Date.now() / 9000) * 0.08) * 0.2) *
-      100,
-    0,
-    100
-  );
+  const { kp, kpHistory, isLive: kpIsLive, lastUpdate } = useKpData();
+  const { f107, isLive: f107IsLive } = useF107Data();
+  const { donki, isLive: donkiIsLive } = useDonkiData();
+  const { mag, magRef, sensorActive, sensorAvailable, activateSensor } = useMagnetometer();
+  const { indexValue, scopeData } = useDissipativeIndex({ mag, magRef, kp });
+  const lightSensor = useLightSensor();
+  const uv = useUVIndex();
 
   const state = stateForIndex(indexValue);
 
@@ -336,6 +142,20 @@ export default function App() {
               }
               note="El índice Kp se actualiza cada 3 horas."
             />
+            <LightCell
+              lux={lightSensor.lux}
+              sensorActive={lightSensor.sensorActive}
+              sensorAvailable={lightSensor.sensorAvailable}
+              platformSupported={lightSensor.platformSupported}
+              activateSensor={lightSensor.activateSensor}
+            />
+            <UVCell
+              uvIndex={uv.uvIndex}
+              isLive={uv.isLive}
+              locationLabel={uv.locationLabel}
+              permissionStatus={uv.permissionStatus}
+              refetch={uv.refetch}
+            />
           </View>
 
           <View style={styles.sensorRow}>
@@ -355,6 +175,11 @@ export default function App() {
             )}
           </View>
         </View>
+
+        {/* Diagnostic */}
+        <Section num="00 · DIAGNÓSTICO" title="Estado de las " em="fuentes de datos">
+          <DataDiagnostic />
+        </Section>
 
         {/* Oscilloscope */}
         <Section num="01 · REGISTRO CONTINUO" title="El osciloscopio de la " em="Cronosfera">
@@ -436,8 +261,13 @@ export default function App() {
           <Logbook currentIndex={indexValue} currentKp={kp} />
         </Section>
 
+        {/* Heart Rate */}
+        <Section num="08 · PULSO" title="Tu propia " em="señal biológica">
+          <HeartRateMonitor />
+        </Section>
+
         {/* Lineage */}
-        <Section num="08 · LINAJE" title="Sobre los hombros de " em="quienes vieron primero">
+        <Section num="09 · LINAJE" title="Sobre los hombros de " em="quienes vieron primero">
           <LineageCell name="A. L. Chizhevsky" years="1897 – 1964" desc="Fundador de la Heliobiología." />
           <LineageCell name="Franz Halberg" years="1919 – 2013" desc="Fundador de la Cronobiología." />
           <LineageCell name="Vladimir Vernadsky" years="1863 – 1945" desc="Concibió la Noósfera." />
