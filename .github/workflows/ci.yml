@@ -1,0 +1,97 @@
+name: CI — Noósfera
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+
+  lint-syntax:
+    name: Lint — sintaxis JSX/JS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm install --legacy-peer-deps
+      - name: Validar sintaxis de todos los archivos JS/JSX
+        run: |
+          node -e "
+          const babel = require('@babel/core');
+          const fs = require('fs');
+          const files = [
+            'App.js', 'theme.js',
+            ...fs.readdirSync('hooks').map(f => 'hooks/' + f),
+            ...fs.readdirSync('components').map(f => 'components/' + f),
+          ].filter(f => f.endsWith('.js'));
+          let failed = false;
+          for (const f of files) {
+            try {
+              babel.transform(fs.readFileSync(f,'utf8'), {
+                filename: f,
+                presets: [
+                  ['@babel/preset-env',{targets:{node:'current'}}],
+                  ['@babel/preset-react',{runtime:'automatic'}],
+                ],
+              });
+              console.log('OK   ' + f);
+            } catch (e) {
+              console.error('FAIL ' + f + ': ' + e.message.split('\n')[0]);
+              failed = true;
+            }
+          }
+          if (failed) process.exit(1);
+          "
+
+  expo-doctor:
+    name: Expo Doctor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm install --legacy-peer-deps
+      - run: |
+          echo "EXPO_PUBLIC_NASA_API_KEY=DEMO_KEY" >> .env
+          echo "EXPO_PUBLIC_LAT=36.74" >> .env
+          echo "EXPO_PUBLIC_LON=-6.43" >> .env
+      - run: npx expo-doctor
+
+  validate-config:
+    name: Validar configuración y seguridad
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: node -e "JSON.parse(require('fs').readFileSync('app.json','utf8')); console.log('app.json OK')"
+      - run: node -e "JSON.parse(require('fs').readFileSync('package.json','utf8')); console.log('package.json OK')"
+      - name: Confirmar que .env NO está en el repositorio
+        run: |
+          if git ls-files --error-unmatch .env 2>/dev/null; then
+            echo "ERROR: .env commiteado — contiene credenciales"
+            exit 1
+          else
+            echo "OK: .env no está en el repositorio"
+          fi
+      - name: Confirmar que .env.example SÍ existe
+        run: |
+          [ -f ".env.example" ] && echo "OK: .env.example existe" || (echo "ERROR: falta .env.example" && exit 1)
+
+  validate-docs:
+    name: Validar documentación
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verificar docs/
+        run: |
+          for doc in docs/ARCHITECTURE.md docs/SCIENCE.md docs/DATA_SOURCES.md docs/CONTRIBUTING.md; do
+            [ -f "$doc" ] && echo "OK: $doc ($(wc -l < $doc) líneas)" || (echo "ERROR: falta $doc" && exit 1)
+          done
+      - name: Verificar README.md
+        run: |
+          [ -s "README.md" ] && echo "OK: README.md" || (echo "ERROR: README.md vacío o inexistente" && exit 1)

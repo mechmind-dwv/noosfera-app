@@ -1,0 +1,27 @@
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Europe/Madrid"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "automated"
+    ignore:
+      - dependency-name: "expo"
+      - dependency-name: "react-native"
+      - dependency-name: "expo-sensors"
+      - dependency-name: "expo-camera"
+      - dependency-name: "expo-location"
+      - dependency-name: "expo-font"
+      - dependency-name: "expo-status-bar"
+      - dependency-name: "@expo-google-fonts/*"
+      - dependency-name: "react-native-svg"
+      - dependency-name: "@react-native-async-storage/async-storage"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
