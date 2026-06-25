@@ -8,7 +8,6 @@ on:
 
 jobs:
 
-  # ── 1. Lint de sintaxis JSX ──────────────────────────────────────────
   lint-syntax:
     name: Lint — sintaxis JSX/JS
     runs-on: ubuntu-latest
@@ -19,7 +18,7 @@ jobs:
           node-version: '20'
           cache: 'npm'
       - run: npm install --legacy-peer-deps
-      - name: Validar sintaxis (Babel 7 — transformSync)
+      - name: Validar sintaxis (transformSync, compatible Babel 7 y 8)
         run: |
           node -e "
           const babel = require('@babel/core');
@@ -48,7 +47,6 @@ jobs:
           if (failed) process.exit(1);
           "
 
-  # ── 2. Expo Doctor ───────────────────────────────────────────────────
   expo-doctor:
     name: Expo Doctor
     runs-on: ubuntu-latest
@@ -59,15 +57,14 @@ jobs:
           node-version: '20'
           cache: 'npm'
       - run: npm install --legacy-peer-deps
-      - name: Crear .env mínimo
+      - name: Crear .env mínimo para CI
         run: |
           echo "EXPO_PUBLIC_NASA_API_KEY=DEMO_KEY" >> .env
           echo "EXPO_PUBLIC_LAT=36.74" >> .env
           echo "EXPO_PUBLIC_LON=-6.43" >> .env
-      - name: Ejecutar expo-doctor (solo informativo, no bloquea CI)
-        run: npx expo-doctor || echo "expo-doctor completado con advertencias — ver detalles arriba"
+      - name: Ejecutar expo-doctor (no bloquea CI por parches de versión)
+        run: npx expo-doctor || echo "expo-doctor completado con advertencias"
 
-  # ── 3. Validación de configuración y seguridad ───────────────────────
   validate-config:
     name: Validar configuración y seguridad
     runs-on: ubuntu-latest
@@ -78,7 +75,7 @@ jobs:
       - name: Confirmar que .env NO está en el repositorio
         run: |
           if git ls-files --error-unmatch .env 2>/dev/null; then
-            echo "ERROR: .env está commiteado — contiene credenciales privadas"
+            echo "ERROR: .env commiteado — contiene credenciales"
             exit 1
           else
             echo "OK: .env no está en el repositorio"
@@ -87,7 +84,6 @@ jobs:
         run: |
           [ -f ".env.example" ] && echo "OK: .env.example existe" || (echo "ERROR: falta .env.example" && exit 1)
 
-  # ── 4. Validación de documentación ───────────────────────────────────
   validate-docs:
     name: Validar documentación
     runs-on: ubuntu-latest
