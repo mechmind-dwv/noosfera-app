@@ -43,6 +43,8 @@ import Logbook from './components/Logbook';
 import { LightCell, UVCell } from './components/LightReading';
 import HeartRateMonitor from './components/HeartRateMonitor';
 import DataDiagnostic from './components/DataDiagnostic';
+import CycleHorizon from './components/CycleHorizon';
+import { useCycleEngine } from './hooks/useCycleEngine';
 
 export default function App() {
   const [fontsLoaded] = useFonts({
@@ -59,6 +61,7 @@ export default function App() {
   const { donki, isLive: donkiIsLive } = useDonkiData();
   const { mag, magRef, sensorActive, sensorAvailable, activateSensor } = useMagnetometer();
   const { indexValue, scopeData } = useDissipativeIndex({ mag, magRef, kp });
+  const { composite, modules } = useCycleEngine();
   const lightSensor = useLightSensor();
   const uv = useUVIndex();
 
@@ -178,6 +181,7 @@ export default function App() {
 
         {/* Diagnostic */}
         <Section num="00 · DIAGNÓSTICO" title="Estado de las " em="fuentes de datos">
+          <CycleHorizon composite={composite} modules={modules} />
           <DataDiagnostic />
         </Section>
 
