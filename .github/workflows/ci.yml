@@ -18,6 +18,7 @@ jobs:
           node-version: '20'
           cache: 'npm'
       - run: npm install --legacy-peer-deps
+      - run: npm install --save-dev @babel/preset-env @babel/preset-react
       - name: Validar sintaxis (transformSync, compatible Babel 7 y 8)
         run: |
           node -e "
@@ -57,6 +58,7 @@ jobs:
           node-version: '20'
           cache: 'npm'
       - run: npm install --legacy-peer-deps
+      - run: npm install --save-dev @babel/preset-env @babel/preset-react
       - name: Crear .env mínimo para CI
         run: |
           echo "EXPO_PUBLIC_NASA_API_KEY=DEMO_KEY" >> .env
