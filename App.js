@@ -45,6 +45,8 @@ import HeartRateMonitor from './components/HeartRateMonitor';
 import DataDiagnostic from './components/DataDiagnostic';
 import CycleHorizon from './components/CycleHorizon';
 import { useCycleEngine } from './hooks/useCycleEngine';
+import FTRTHorizon from './components/FTRTHorizon';
+import { useFTRTEngine } from './hooks/useFTRTEngine';
 
 export default function App() {
   const [fontsLoaded] = useFonts({
@@ -62,6 +64,7 @@ export default function App() {
   const { mag, magRef, sensorActive, sensorAvailable, activateSensor } = useMagnetometer();
   const { indexValue, scopeData } = useDissipativeIndex({ mag, magRef, kp });
   const { composite, modules } = useCycleEngine();
+  const { today: ftrtToday, baryToday, decoupled, projection } = useFTRTEngine();
   const lightSensor = useLightSensor();
   const uv = useUVIndex();
 
@@ -182,6 +185,7 @@ export default function App() {
         {/* Diagnostic */}
         <Section num="00 · DIAGNÓSTICO" title="Estado de las " em="fuentes de datos">
           <CycleHorizon composite={composite} modules={modules} />
+          <FTRTHorizon today={ftrtToday} baryToday={baryToday} decoupled={decoupled} projection={projection} />
           <DataDiagnostic />
         </Section>
 
