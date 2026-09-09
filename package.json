@@ -18,12 +18,15 @@
     "expo-location": "~19.0.8",
     "expo-sensors": "~15.0.8",
     "expo-status-bar": "~3.0.9",
-    "react": "19.2.7",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
     "react-native": "0.81.5",
     "react-native-svg": "15.12.1"
   },
   "devDependencies": {
-    "@babel/core": "^8.0.1"
+    "@babel/core": "^7.29.7",
+    "@babel/preset-env": "^8.0.2",
+    "@babel/preset-react": "^8.0.1"
   },
   "private": true
 }

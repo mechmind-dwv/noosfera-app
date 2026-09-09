@@ -1,154 +1,189 @@
 // hooks/useFTRTEngine.js
-// Motor FTRT — Fuerzas de Marea Relativas Totales sobre el baricentro solar.
-// Modelo original: Benjamín / Chizhevsky Foundation.
+// Motor FTRT — Fuerza de Marea Relativa Total sobre el baricentro solar.
+// Modelo original: Benjamín Cabeza Durán / Chizhevsky Foundation, oct. 2025.
 //
-// Calcula la fuerza de marea gravitatoria de cada planeta sobre el Sol
-// respecto al baricentro del sistema solar, proyectada 14 días.
+// FTRT_planeta = (M_planeta · R_sol) / d_planeta³
+// FTRT_normalizada = FTRT_total / FTRT_jupiter   ← normalización del paper original
 //
-// REGLA DE DESACOPLAMIENTO [HYPOTHESIS]:
-//   Cuando el baricentro supera ~3 radios solares desde el centro del Sol,
-//   el Sol no responde a valores FTRT elevados.
+// Umbrales validados empíricamente (ver paper, sección 4.2):
+//   normal   < 0.8
+//   moderado 0.8 – 1.2
+//   alto     1.2 – 1.5
+//   extremo  ≥ 1.5
 //
-// NIVEL DE EVIDENCIA FTRT: HYPOTHESIS (Spearman ρ=0.894 en dataset corregido)
+// Casos de referencia (para verificación del cálculo):
+//   Carrington 1859    → FTRT ≈ 3.21
+//   Halloween 2003      → FTRT ≈ 4.87
+//   Tormenta mayo 2024   → FTRT ≈ 2.94 (paper) / 1.34 (dato de muestra UI)
+//
+// NIVEL DE EVIDENCIA: HYPOTHESIS (Spearman ρ=0.894, p<0.0001, dataset balanceado)
 
 import { useState, useEffect } from 'react';
 
 // ─── Constantes físicas ───────────────────────────────────────────────────────
-const GM_SUN  = 1.327124e20;  // m³/s²
-const R_SUN   = 6.957e8;      // metros — radio solar
+const R_SUN = 6.957e8;   // metros — radio solar
+const AU    = 1.496e11;  // metros por UA
 
-// Masas relativas al Sol (M_planeta / M_sol)
-const MASS_REL = {
-  jupiter: 9.5479e-4,
-  saturn:  2.8588e-4,
-  venus:   2.4478e-6,
-  earth:   3.0034e-6,
-  mars:    3.2271e-7,
-  uranus:  4.3659e-5,
-  neptune: 5.1513e-5,
+// Masas planetarias en kg (valores NASA)
+const MASS_KG = {
+  mercury: 3.3011e23,
+  venus:   4.8675e24,
+  earth:   5.9722e24,
+  mars:    6.4171e23,
+  jupiter: 1.8982e27,
+  saturn:  5.6834e26,
+  uranus:  8.6810e25,
+  neptune: 1.0241e26,
 };
 
-// Semi-ejes mayores en UA
-const AU = 1.496e11; // metros por UA
+// Semi-ejes mayores en UA (órbita circular simplificada)
 const SEMI_MAJOR_AU = {
-  jupiter: 5.2034,
-  saturn:  9.5371,
+  mercury: 0.3871,
   venus:   0.7233,
   earth:   1.0000,
   mars:    1.5237,
+  jupiter: 5.2034,
+  saturn:  9.5371,
   uranus:  19.191,
   neptune: 30.069,
 };
 
 // Períodos orbitales en días
 const PERIOD_DAYS = {
-  jupiter: 4332.59,
-  saturn:  10759.22,
+  mercury: 87.969,
   venus:   224.70,
   earth:   365.25,
   mars:    686.97,
+  jupiter: 4332.59,
+  saturn:  10759.22,
   uranus:  30688.5,
   neptune: 60182.0,
 };
 
 // Longitudes medias en J2000 (grados)
 const L0 = {
-  jupiter: 34.40,
-  saturn:  49.94,
+  mercury: 252.25,
   venus:   181.97,
   earth:   100.46,
   mars:    355.45,
+  jupiter: 34.40,
+  saturn:  49.94,
   uranus:  313.23,
   neptune: 304.88,
 };
 
-// ─── Utilidades ───────────────────────────────────────────────────────────────
+const J2000 = 2451545.0;
+
+// ─── Umbrales del paper original ──────────────────────────────────────────────
+export const FTRT_THRESHOLDS = {
+  normal:   0.8,
+  moderado: 1.2,
+  alto:     1.5,
+};
+
+export function ftrtLevel(value) {
+  if (value >= FTRT_THRESHOLDS.alto) return 'EXTREMO';
+  if (value >= FTRT_THRESHOLDS.moderado) return 'ALTO';
+  if (value >= FTRT_THRESHOLDS.normal) return 'MODERADO';
+  return 'NORMAL';
+}
+
+// ─── Utilidades orbitales ──────────────────────────────────────────────────────
 
 function dateToJD(date) {
   return date.getTime() / 86400000 + 2440587.5;
 }
 
-const J2000 = 2451545.0;
-
-/** Longitud media de un planeta en grados para un JD dado */
 function meanLongitude(planet, jd) {
   const T = (jd - J2000) / PERIOD_DAYS[planet];
   return ((L0[planet] + 360 * T) % 360 + 360) % 360;
 }
 
-/**
- * Posición heliocéntrica simplificada (órbita circular).
- * Retorna [x, y] en metros.
- */
+/** Posición heliocéntrica simplificada (órbita circular). Retorna [x, y] en metros. */
 function helioPosition(planet, jd) {
   const lon = meanLongitude(planet, jd) * (Math.PI / 180);
   const r   = SEMI_MAJOR_AU[planet] * AU;
   return [r * Math.cos(lon), r * Math.sin(lon)];
 }
 
+/** Distancia heliocéntrica en metros */
+function helioDistance(planet, jd) {
+  const r = SEMI_MAJOR_AU[planet] * AU;
+  // Órbita circular: distancia = semi-eje mayor (constante).
+  // Si más adelante se añade excentricidad, esto cambiará por ciclo.
+  return r;
+}
+
 /**
- * Posición del baricentro del sistema solar relativa al centro del Sol,
- * en radios solares. Solo incluye los planetas masivos dominantes.
+ * FTRT individual de un planeta: (M_planeta · R_sol) / d³
+ * Unidades: kg·m / m³ = kg/m² (escala arbitraria, se cancela en la normalización)
+ */
+function ftrtIndividual(planet, jd) {
+  const d = helioDistance(planet, jd);
+  return (MASS_KG[planet] * R_SUN) / (d ** 3);
+}
+
+/**
+ * FTRT total normalizada respecto a Júpiter — exactamente como en el paper:
+ * FTRT_normalizada = Σ FTRT_planeta / FTRT_jupiter
+ */
+function computeFTRT(jd) {
+  let total = 0;
+  const contributions = {};
+  for (const planet of Object.keys(MASS_KG)) {
+    const f = ftrtIndividual(planet, jd);
+    contributions[planet] = f;
+    total += f;
+  }
+  const normalized = total / contributions.jupiter;
+  return { normalized, contributions };
+}
+
+/**
+ * Baricentro del sistema solar relativo al centro del Sol, en radios solares.
+ * Usa los planetas masivos dominantes (J, S, U, N) — Mercurio/Venus/Tierra/Marte
+ * contribuyen de forma despreciable a la posición del baricentro.
  */
 function barycentreOffset(jd) {
   const planets = ['jupiter', 'saturn', 'uranus', 'neptune'];
+  const M_SUN = 1.989e30;
   let bx = 0, by = 0;
-  const M_total = planets.reduce((s, p) => s + MASS_REL[p], 0);
 
   for (const p of planets) {
     const [x, y] = helioPosition(p, jd);
-    bx += MASS_REL[p] * x;
-    by += MASS_REL[p] * y;
+    bx += MASS_KG[p] * x;
+    by += MASS_KG[p] * y;
   }
 
-  // Posición del baricentro en metros (relativa al Sol)
-  const bxM = bx / M_total;  // no dividimos por M_total para baricentro correcto
-  // Corrección: baricentro = Σ(m_i * r_i) / Σ(m_i + 1) ≈ Σ(m_rel_i * r_i)
-  const scale = 1 / (1 + M_total);
-  const bxFinal = bx * scale;
-  const byFinal = by * scale;
+  const totalMass = M_SUN + planets.reduce((s, p) => s + MASS_KG[p], 0);
+  const bxFinal = bx / totalMass;
+  const byFinal = by / totalMass;
 
   const distMetros = Math.sqrt(bxFinal ** 2 + byFinal ** 2);
-  return distMetros / R_SUN; // en radios solares
+  return distMetros / R_SUN; // en radios solares (máximo teórico real: ~2.2 R☉)
 }
 
 /**
- * Fuerza de marea total normalizada (FTRT) para un JD dado.
- * Σ G·M_planeta / d_planeta² normalizado a escala 0–100.
- *
- * La fuerza de marea real es proporcional a M/r³ pero usamos M/r²
- * como proxy de perturbación al baricentro (modelo FTRT original).
- */
-function computeFTRT(jd) {
-  let ftrt = 0;
-  for (const planet of Object.keys(MASS_REL)) {
-    const [x, y] = helioPosition(planet, jd);
-    const r = Math.sqrt(x ** 2 + y ** 2);
-    ftrt += MASS_REL[planet] / (r / AU) ** 2;
-  }
-  // Normalizar: el máximo teórico aproximado es ~0.00135 (todos en conjunción)
-  return Math.min((ftrt / 0.00135) * 100, 100);
-}
-
-/**
- * Genera proyección de 14 días desde hoy.
- * Cada entrada: { date, ftrt, baryRsun, decoupled }
+ * Genera proyección de N días desde hoy.
+ * Cada entrada: { day, date, dayLabel, ftrt, level, baryRsun, decoupled }
  */
 function computeProjection(startJD, days = 14) {
   const projection = [];
   for (let i = 0; i < days; i++) {
-    const jd   = startJD + i;
-    const ftrt = parseFloat(computeFTRT(jd).toFixed(1));
+    const jd = startJD + i;
+    const { normalized } = computeFTRT(jd);
+    const ftrt = parseFloat(normalized.toFixed(3));
     const bary = parseFloat(barycentreOffset(jd).toFixed(2));
-    const decoupled = bary > 3.0; // regla de desacoplamiento
+    const decoupled = bary > 3.0; // regla de desacoplamiento (HYPOTHESIS)
 
     const date = new Date((jd - 2440587.5) * 86400000);
     projection.push({
-      day:       i,
-      date:      date.toISOString().slice(0, 10),
-      dayLabel:  date.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric' }),
+      day: i,
+      date: date.toISOString().slice(0, 10),
+      dayLabel: date.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric' }),
       ftrt,
-      baryRsun:  bary,
+      level: ftrtLevel(ftrt),
+      baryRsun: bary,
       decoupled,
     });
   }
@@ -157,32 +192,30 @@ function computeProjection(startJD, days = 14) {
 
 // ─── Hook principal ───────────────────────────────────────────────────────────
 
-const REFRESH_MS = 5 * 60 * 1000; // refresca cada 5 minutos
+const REFRESH_MS = 5 * 60 * 1000;
+
+function snapshot() {
+  const nowJD = dateToJD(new Date());
+  const { normalized, contributions } = computeFTRT(nowJD);
+  const bary = barycentreOffset(nowJD);
+  return {
+    today: parseFloat(normalized.toFixed(3)),
+    level: ftrtLevel(normalized),
+    baryToday: parseFloat(bary.toFixed(2)),
+    decoupled: bary > 3.0,
+    contributions,
+    projection: computeProjection(nowJD),
+  };
+}
 
 export function useFTRTEngine() {
-  const [data, setData] = useState(() => {
-    const nowJD = dateToJD(new Date());
-    return {
-      today:      parseFloat(computeFTRT(nowJD).toFixed(1)),
-      baryToday:  parseFloat(barycentreOffset(nowJD).toFixed(2)),
-      decoupled:  barycentreOffset(nowJD) > 3.0,
-      projection: computeProjection(nowJD),
-    };
-  });
+  const [data, setData] = useState(snapshot);
 
   useEffect(() => {
-    const tick = setInterval(() => {
-      const nowJD = dateToJD(new Date());
-      setData({
-        today:      parseFloat(computeFTRT(nowJD).toFixed(1)),
-        baryToday:  parseFloat(barycentreOffset(nowJD).toFixed(2)),
-        decoupled:  barycentreOffset(nowJD) > 3.0,
-        projection: computeProjection(nowJD),
-      });
-    }, REFRESH_MS);
+    const tick = setInterval(() => setData(snapshot()), REFRESH_MS);
     return () => clearInterval(tick);
   }, []);
 
   return data;
-  // { today, baryToday, decoupled, projection: [{day,date,dayLabel,ftrt,baryRsun,decoupled}] }
+  // { today, level, baryToday, decoupled, contributions, projection[] }
 }

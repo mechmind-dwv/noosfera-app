@@ -64,7 +64,7 @@ export default function App() {
   const { mag, magRef, sensorActive, sensorAvailable, activateSensor } = useMagnetometer();
   const { indexValue, scopeData } = useDissipativeIndex({ mag, magRef, kp });
   const { composite, modules } = useCycleEngine();
-  const { today: ftrtToday, baryToday, decoupled, projection } = useFTRTEngine();
+  const { today: ftrtToday, level: ftrtLevel, baryToday, decoupled, projection } = useFTRTEngine();
   const lightSensor = useLightSensor();
   const uv = useUVIndex();
 
@@ -185,7 +185,7 @@ export default function App() {
         {/* Diagnostic */}
         <Section num="00 · DIAGNÓSTICO" title="Estado de las " em="fuentes de datos">
           <CycleHorizon composite={composite} modules={modules} />
-          <FTRTHorizon today={ftrtToday} baryToday={baryToday} decoupled={decoupled} projection={projection} />
+          <FTRTHorizon today={ftrtToday} level={ftrtLevel} baryToday={baryToday} decoupled={decoupled} projection={projection} />
           <DataDiagnostic />
         </Section>
 
